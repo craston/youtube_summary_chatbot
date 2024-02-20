@@ -1,0 +1,17 @@
+watermark
+black
+ipykernel
+rich
+python-dotenv
+scipy
+pandas
+gradio
+openai
+langchain==0.1.4
+langchain-openai
+grandalf
+langfuse
+sentence-transformers
+faiss-cpu
+chromadb
+youtube-transcript-api
