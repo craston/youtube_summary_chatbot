@@ -1,2 +1,3 @@
+__pycache__
 .env
-.llm_query_env
+.video_gpt_env
