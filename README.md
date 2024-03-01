@@ -21,7 +21,7 @@ We hope you find this project useful and we're excited to see how you use it!
 ```
 make init
 echo "OPENAPI_API_KEY=sk-<your_actual_key_here>" > .env
-source .yt_chatbot_env/bin/activate
+source .venv/bin/activate
 ```
 
 ## Run
