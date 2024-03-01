@@ -1,5 +1,5 @@
 PYTHON=python3.10
-VENV=.yt_chatbot_env
+VENV=.venv
 BIN=$(VENV)/bin
 PYTHON_VENV=$(BIN)/python3
 
