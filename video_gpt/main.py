@@ -7,54 +7,34 @@ from typing import Optional
 
 import gradio as gr
 
-from utils import video_exists
-from utils import get_video_title
+from utils import get_youtube_title, get_youtube_url
 from video_query_llm import VideoQueryLLM
 
-def initialize_video_query_llm(youtube_url:str) -> tuple[Optional[str], Optional[str]]:
+bot = VideoQueryLLM()
 
-    # Check if the YouTube link is valid.
-    if not video_exists(youtube_url):
-        gr.Error("The YouTube video does not exist. Please enter a valid YouTube video URL.")
-        return None, None
+def initialize_video_query_llm(inp: str) -> tuple[str, str]:
+    title = get_youtube_title(inp)
+    embed_html = get_youtube_url(inp)
 
-    global VideoQueryLLM_obj ## Is there a better way to do this?
-    VideoQueryLLM_obj =  VideoQueryLLM(youtube_url)
-
-    # Get the URL of the YouTube video.
-    url = f"https://www.youtube.com/embed/{youtube_url.split('&')[0].split('=')[1]}"
-
-    # Create the HTML code for the embedded YouTube video.
-    embed_html = f"<iframe width='560' height='315' src={url} title='YouTube video player' \
-    frameborder='0' allow='accelerometer; autoplay; clipboard-write; encrypted-media; \
-    gyroscope; picture-in-picture; web-share' allowfullscreen></iframe>"
-
-    title = get_video_title(youtube_url)
-
-    # Generate summary
-    summary = VideoQueryLLM_obj.summary_chain.run(VideoQueryLLM_obj.transcript)
+    bot.load_video(inp)
+    summary = bot.get_summary()
+    
     summary = f"Video Title: {title}\n\nSummary: {summary}"
     return embed_html, summary
 
-def my_chat_function(message: str, history):
-    input = {"question": message, }
-    if 'VideoQueryLLM_obj' not in globals():
+def my_chat_function(message: str, history: list[tuple[str, str]]):
+    if not hasattr(bot, "retriever"):
         history.append((message, "Please provide a YouTube link first and Process Video"))
         return "", history
-    response = VideoQueryLLM_obj.final_chain.invoke(input)
-    VideoQueryLLM_obj.memory.save_context(input, {"answer": response["answer"].content})
-    VideoQueryLLM_obj.memory.load_memory_variables({})  
-    history.append((message, response["answer"].content))
+    
+    response = bot.get_response(message)
+    history.append((message, response))
     return "", history
 
 def clear_chat(message, chatbot):
     return "", []
 
-def run():
-    # Is there a way to get rid of global variable?
-    if 'VideoQueryLLM_obj' in globals():
-        print("VideoQueryLLM_obj already exists... so deleting it.")
-        del(VideoQueryLLM_obj)    
+def run():   
 
     with gr.Blocks(theme=gr.themes.Soft()) as demo:
         gr.Markdown("# Video GPT-3 Chatbot")

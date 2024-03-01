@@ -5,6 +5,7 @@ from langchain_openai.chat_models import ChatOpenAI
 
 from langchain_community.vectorstores.faiss import FAISS
 
+from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import get_buffer_string
 from langchain_core.runnables import RunnableLambda
@@ -23,24 +24,24 @@ from operator import itemgetter
 
 
 class VideoQueryLLM():
-    def __init__(self, youtube_url:str) -> None:
-        self.youtube_url = youtube_url
-        self.transcript, self.retriever = self.generate_retriever_from_videourl()
+    def __init__(self) -> None:
+        self.llm = ChatOpenAI(temperature=0)
         self._init_prompts_templates()
         self.memory = ConversationBufferMemory(
             return_messages=True, output_key="answer", input_key="question"
         )
-        self.standalone_question, self.final_chain = self.create_chain()
-        self.summary_chain = load_summarize_chain(ChatOpenAI(), chain_type="map_reduce")
 
-    def generate_retriever_from_videourl(self) -> VectorStoreRetriever:
-        transcript_loader = YoutubeLoader.from_youtube_url(self.youtube_url, language="en")
-        transcript = transcript_loader.load_and_split()
+    def load_video(self, youtube_url:str)-> None:
+        transcript_loader = YoutubeLoader.from_youtube_url(youtube_url, language="en")
+        self.transcript = transcript_loader.load_and_split()
         oai_embedding_model = OpenAIEmbeddings()
-        vector_store = FAISS.from_documents(transcript, oai_embedding_model)
-        faiss_retriever = vector_store.as_retriever()
-        return transcript, faiss_retriever
+        vector_store = FAISS.from_documents(self.transcript, oai_embedding_model)
+        self.retriever = vector_store.as_retriever()
 
+    def get_summary(self)-> None:
+        
+        chain = load_summarize_chain(self.llm, chain_type="map_reduce")
+        return chain.run(self.transcript)
     
     def _init_prompts_templates(self)-> None:
         _template = """Given the following conversation and a follow up question, 
@@ -59,13 +60,9 @@ class VideoQueryLLM():
         """
         self.ANSWER_PROMPT = ChatPromptTemplate.from_template(template)
 
-        self.DEFAULT_DOCUMENT_PROMPT = PromptTemplate.from_template(template="{page_content}")
-
-    def _combine_documents(
-        self, docs, document_prompt, document_separator="\n\n"
-        ):
-        doc_strings = [format_document(doc, document_prompt) for doc in docs]
-        return document_separator.join(doc_strings)
+    @staticmethod
+    def combine_documents(documents: list[Document], separator: str = "\n\n") -> str:
+        return separator.join(d.page_content for d in documents)
 
     def create_chain(self):
         # First we add a step to load memory
@@ -73,33 +70,30 @@ class VideoQueryLLM():
         loaded_memory = RunnablePassthrough.assign(
             chat_history=RunnableLambda(self.memory.load_memory_variables) | itemgetter("history"),
         )
+
         # Now we calculate the standalone question
-        standalone_question = {
-            "standalone_question": {
+        question_with_chat_history = {
+            "question_with_chat_history": {
                 "question": lambda x: x["question"],
                 "chat_history": lambda x: get_buffer_string(x["chat_history"]),
             }
             | self.CONDENSE_QUESTION_PROMPT
-            | ChatOpenAI(temperature=0)
+            | self.llm
             | StrOutputParser(),
         }
+        
+        chain = (
+            {"context": itemgetter("question_with_chat_history") | self.retriever | self.combine_documents, 
+            "question": lambda x: x["question_with_chat_history"],}
+            | self.ANSWER_PROMPT
+            | self.llm
+            | StrOutputParser())
 
-        # Now we retrieve the documents
-        retrieved_documents = {
-            "docs": itemgetter("standalone_question") | self.retriever,
-            "question": lambda x: x["standalone_question"],
-        }
 
-        # Now we construct the inputs for the final prompt
-        final_inputs = {
-            "context": lambda x: self._combine_documents(docs= x["docs"], document_prompt=self.DEFAULT_DOCUMENT_PROMPT),
-            "question": itemgetter("question"),
-        }
-        # And finally, we do the part that returns the answers
-        answer = {
-            "answer": final_inputs | self.ANSWER_PROMPT | ChatOpenAI(), 
-            "docs": itemgetter("docs"),
-        }
-        # And now we put it all together!
-        final_chain = loaded_memory | standalone_question | retrieved_documents | answer
-        return standalone_question, final_chain 
+        return loaded_memory| question_with_chat_history | chain
+    
+    def get_response(self, question: str)-> str:
+        chain = self.create_chain()
+        response = chain.invoke({"question": question})
+        self.memory.save_context({"question": question}, {"answer": response})
+        return response
